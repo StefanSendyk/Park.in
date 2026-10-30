@@ -104,6 +104,7 @@ input[type=range]{width:100%;accent-color:#17734F;margin:0}
 .hints div{display:grid;grid-template-columns:30px 1fr;gap:12px;align-items:center;font-size:14px;font-weight:600}
 .hints i{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-style:normal;font-weight:900;color:#fff;font-size:13px}
 .kv{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.grab{display:none}
 .note{font-size:13px;font-weight:800;color:var(--mint-deep);background:#E7F8F0;border-radius:12px;padding:10px 12px}
 
 .zoom{position:fixed;right:var(--gapR);bottom:calc(20px + env(safe-area-inset-bottom, 0px));z-index:4;display:flex;flex-direction:column;gap:8px}
@@ -134,9 +135,11 @@ input[type=range]{width:100%;accent-color:#17734F;margin:0}
   .keyb,.foot,.timeb,.filtb,.jumpb,.fine,.loadnote{display:none}
   /* bottom sheet: tucked down until something is tapped */
   .right{left:0;right:0;top:auto;bottom:0;width:auto;max-height:52%;box-sizing:border-box;border-radius:20px 20px 0 0;padding:28px max(18px, env(safe-area-inset-left, 0px)) calc(16px + env(safe-area-inset-bottom, 0px));gap:10px;box-shadow:0 -4px 24px rgba(11,37,69,.25)}
-  .right::before{content:'';position:absolute;top:10px;left:50%;width:38px;height:5px;margin-left:-19px;border-radius:3px;background:#D3DAD7}
-  .right.peek{max-height:calc(92px + env(safe-area-inset-bottom, 0px));overflow:hidden;cursor:pointer}
-  .right.peek .hints,.right.peek .sub,.right.peek .tags{display:none}
+  .right{transition:transform .2s ease;-webkit-user-select:none;user-select:none}
+  .grab{display:block;position:absolute;top:0;left:0;right:0;height:34px;touch-action:none;cursor:grab}
+  .grab::after{content:'';position:absolute;top:10px;left:50%;width:38px;height:5px;margin-left:-19px;border-radius:3px;background:#C5CECB}
+  .right.peek{max-height:calc(92px + env(safe-area-inset-bottom, 0px));overflow:hidden;cursor:pointer;touch-action:none}
+  .right.peek>*:not(h2):not(.prog):not(.grab){display:none}
   .right.peek h2{font-size:17px}
   /* floating round buttons just above the sheet */
   .zoom{top:auto;bottom:calc(var(--sheet, 92px) + 26px);right:max(12px, env(safe-area-inset-right, 0px));gap:10px}
@@ -298,7 +301,7 @@ const ago=t=>{const s=Math.max(1,Math.round((Date.now()-t)/1000));return s<60?`$
 const inSensorZone=i=>Math.abs(SX[i])<750&&Math.abs(SY[i]+50)<520;
 
 /* ---------- state ---------- */
-let sheetOpen=false,sel=null,trip=null,nav=null,carWalk=null,myCar=store.get('parkin-car'),pending=null,saved=null;
+let sheetMode=null,sel=null,trip=null,nav=null,carWalk=null,myCar=store.get('parkin-car'),pending=null,saved=null;
 
 /* ---------- view ---------- */
 const toScreen=(x,y)=>[(x-view.x)*view.s+W/2,(y-view.y)*view.s+H/2];
@@ -418,8 +421,8 @@ function tap(sx,sy){
   const [wx,wy]=toWorld(sx,sy);const rad=Math.max(4,12/view.s);let b=-1,bd=rad*rad;for(let i=0;i<S;i++){if(filt&&TYP[i]!==filt)continue;const d=(SX[i]-wx)**2+(SY[i]-wy)**2;if(d<bd){bd=d;b=i;}}
   if(b>=0)return select({kind:'space',i:b});
   clearSel();}
-function select(s){sel=s;nav=null;carWalk=null;renderRight();kick();}
-function clearSel(){sel=null;nav=null;carWalk=null;renderRight();kick();tryUpgrade();}
+function select(s){sheetMode=null;sel=s;nav=null;carWalk=null;renderRight();kick();}
+function clearSel(){sheetMode=null;sel=null;nav=null;carWalk=null;renderRight();kick();tryUpgrade();}
 
 /* ---------- time + filters + jumps ---------- */
 function sparkline(){const pts=[];for(let h=6;h<=23.5;h+=.5){pts.push([(h-6)/17.5*300,46-occ(day,h)*42]);}
@@ -494,8 +497,9 @@ function renderRight(){
   else{h=`<div class="tags"><span class="tag hint">Explore</span></div><h2>Tap anything on the map</h2>
     <div class="hints"><div><i style="background:var(--mint);color:var(--navy)">✓</i>A green or red square shows that space</div><div><i style="background:var(--blue)">P</i>A blue label shows a car park’s free spaces</div><div><i style="background:var(--navy)">•</i>A restaurant finds parking near its door</div><div><i style="background:#5B6F74">⌕</i>Search a place, street or car park</div></div>
     <div class="sub">Or press <b>Play</b> to drive to a random restaurant on a busy Saturday night.</div>`;}
-  right.innerHTML=h;
-  right.classList.toggle('peek',!trip&&!sel&&!nav&&!carWalk&&!sheetOpen);
+  right.innerHTML='<div class="grab" aria-hidden="true"></div>'+h;
+  // phones: tucked down when nothing is picked and while a busy-Saturday drive plays, unless the person dragged it
+  right.classList.toggle('peek',(sheetMode||((!sel&&!nav&&!carWalk)?'peek':'open'))==='peek');
   const on=(id,fn)=>{const el=$(id);if(el)el.onclick=fn;};
   on('again',play);on('exit',exitTrip);on('close',clearSel);
   on('go',()=>{let tx,ty,node;if(sel.kind==='space'){node=SN[sel.i];tx=SX[sel.i];ty=SY[sel.i];}else{const p=parks[sel.i],e=p.ent||[p.x,p.y];node=nearestNode(e[0],e[1]);tx=e[0];ty=e[1];}navigateTo(node,tx,ty);});
@@ -512,7 +516,7 @@ function findCar(){if(!myCar)return;if(trip)exitTrip();sel=null;nav=null;const a
 
 /* ---------- play ---------- */
 function play(){
-  hideResults();sel=null;nav=null;carWalk=null;if(!trip)saved={day,hour};trip=null;
+  sheetMode=null;hideResults();sel=null;nav=null;carWalk=null;if(!trip)saved={day,hour};trip=null;
   day='sat';hour=20.5;syncTime();applyTime();
   for(let tries=0;tries<60;tries++){
     const rest=D.rest[Math.floor(Math.random()*D.rest.length)];
@@ -527,7 +531,7 @@ function play(){
     updateCounts();$('livelabel').textContent='Busy';$('livedot').style.background=C.red;
     renderRight();fit([...trip.rA,...trip.rB]);kick();return;}
 }
-function onParked(){free[trip.spot]=0;UPD[trip.spot]=Date.now();ST.get(STI[trip.spot]).dirty=true;saveCar(SX[trip.spot],SY[trip.spot],streetName(trip.spot));updateCounts();renderRight();}
+function onParked(){free[trip.spot]=0;UPD[trip.spot]=Date.now();ST.get(STI[trip.spot]).dirty=true;saveCar(SX[trip.spot],SY[trip.spot],streetName(trip.spot));updateCounts();sheetMode='open';renderRight();}
 function exitTrip(){trip=null;if(saved){day=saved.day;hour=saved.hour;saved=null;}syncTime();applyTime();$('livelabel').textContent='Demo';$('livedot').style.background=C.mint;renderRight();animateTo(homeView(),700);tryUpgrade();}
 
 /* ---------- simulated updates ---------- */
@@ -544,8 +548,15 @@ function fetchCoast(){fetch('coast.json').then(r=>{if(!r.ok)throw 0;return r.jso
 function resize(){dpr=Math.min(2,window.devicePixelRatio||1);W=window.innerWidth;H=window.innerHeight;cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);kick();}
 addEventListener('resize',resize);
 if(innerWidth<=860)$('q').placeholder='Search Marbella';
-right.addEventListener('click',()=>{if(right.classList.contains('peek')){sheetOpen=true;right.classList.remove('peek');}});
-cv.addEventListener('pointerdown',()=>{if(sheetOpen&&!sel&&!trip&&!nav&&!carWalk){sheetOpen=false;right.classList.add('peek');}});
+// drag the sheet's handle down to tuck it away, up (or tap) to open it
+let sd=null;
+right.addEventListener('pointerdown',e=>{if(W>860)return;const peek=right.classList.contains('peek');if(!peek&&!e.target.classList.contains('grab'))return;
+  sd={y:e.clientY,dy:0,peek,id:e.pointerId};try{right.setPointerCapture(e.pointerId)}catch(_){}right.style.transition='none';});
+right.addEventListener('pointermove',e=>{if(!sd||e.pointerId!==sd.id)return;sd.dy=e.clientY-sd.y;right.style.transform=`translateY(${sd.peek?Math.min(0,sd.dy)*0.3:Math.max(0,sd.dy)}px)`;});
+const endDrag=e=>{if(!sd||e.pointerId!==sd.id)return;const {dy,peek}=sd;sd=null;right.style.transform='';right.style.transition='';
+  const tap=Math.abs(dy)<8;if(peek&&(tap||dy<-25)){sheetMode='open';right.classList.remove('peek');}else if(!peek&&(tap||dy>50)){sheetMode='peek';right.classList.add('peek');}};
+right.addEventListener('pointerup',endDrag);right.addEventListener('pointercancel',endDrag);
+cv.addEventListener('pointerdown',()=>{if(W<=860&&sheetMode==='open'&&!sel&&!trip&&!nav&&!carWalk){sheetMode=null;right.classList.add('peek');}});
 if(window.ResizeObserver)new ResizeObserver(()=>document.documentElement.style.setProperty('--sheet',(W<=860?right.offsetHeight:92)+'px')).observe(right);
 load(JSON.parse($('mapdata').textContent));syncTime();setJumpState();
 if(myCar)$('findcar').disabled=false;
